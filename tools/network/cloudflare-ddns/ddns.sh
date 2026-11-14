@@ -62,7 +62,7 @@ for cmd in curl jq flock crontab; do command -v "$cmd" >/dev/null || fail "Missi
 mkdir -p "$STATE_DIR"
 chmod 700 "$STATE_DIR"
 exec 9>"$STATE_DIR/lock"
-flock -n 9 || { log 'Another run is active; retry later'; exit 1; }
+flock -n 9 || { log "Another run holds $STATE_DIR/lock; inspect with: fuser -v $STATE_DIR/lock"; exit 1; }
 request(){
  local method="$1" path="$2" payload="${3:-}" response
  local -a args=(--silent --show-error --connect-timeout 8 --max-time 30 -H "Authorization: Bearer $CF_TOKEN" -H 'Content-Type: application/json' -X "$method" -w $'\n%{http_code}')
@@ -140,9 +140,10 @@ if [[ "$MODE" == --install ]]; then
  line="*/$CRON_INTERVAL * * * * /usr/bin/flock -n $STATE_DIR/cron.lock /bin/bash $script --run >> $STATE_DIR/ddns.log 2>&1 $marker"
  { crontab -l 2>/dev/null | grep -Fv "$marker" || true; printf '%s\n' "$line"; } | crontab -
  if command -v systemctl >/dev/null && [[ -d /run/systemd/system ]]; then
-  systemctl enable --now cron || fail '定时任务已保存，但 cron 启动失败，请检查服务'
+  # Do not let a background service inherit the DDNS lock.
+  systemctl enable --now cron 9>&- || fail '定时任务已保存，但 cron 启动失败，请检查服务'
  else
-  service cron start || fail '定时任务已保存，但 cron 启动失败，请检查服务'
+  service cron start 9>&- || fail '定时任务已保存，但 cron 启动失败，请检查服务'
  fi
  log "安装完成：每 $CRON_INTERVAL 分钟更新；配置 $CONFIG_FILE；日志 $STATE_DIR/ddns.log"
  log '现在执行首次更新。'
